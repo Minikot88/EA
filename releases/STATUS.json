@@ -3,7 +3,7 @@
   "latest_development": {
     "version": "v0.1.0",
     "tag": "v0.1.0",
-    "commit": null,
+    "commit": "03af2575b7c43cdec9355a5b73185d980fbf8da0",
     "status": "development",
     "approved_for_use": false
   },
