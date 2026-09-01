@@ -1,0 +1,10 @@
+{
+  "baseline": [
+    "git",
+    "python",
+    "model-catalog"
+  ],
+  "project_recommended": [],
+  "routing_policy": "load_metadata_then_only_selected_capability",
+  "schema_version": 1
+}

@@ -1,0 +1,44 @@
+{
+  "schema_version": 2,
+  "policy_version": "2.0.0",
+  "model_selection": {
+    "fast": {
+      "effort": "low",
+      "signals": [
+        "translate", "summarize", "rewrite", "short answer", "status only", "list files", "find file", "read only", "quick question",
+        "แปล", "สรุป", "เขียนใหม่", "ตอบสั้น", "เช็คสถานะ", "ดูสถานะ", "รายชื่อไฟล์", "หาไฟล์", "อ่านอย่างเดียว", "คำถามสั้น"
+      ],
+      "models": ["gpt-5.6-luna", "gpt-5.4-mini", "gpt-5.3-codex-spark", "gpt-5.6-terra", "gpt-5.6-sol"]
+    },
+    "balanced": {
+      "effort": "medium",
+      "signals": [],
+      "models": ["gpt-5.6-terra", "gpt-5.6-sol", "gpt-5.4", "gpt-5.5"]
+    },
+    "deep": {
+      "effort": "xhigh",
+      "signals": [
+        "production", "deploy", "security", "vulnerability", "authentication", "authorization", "payment", "database migration", "architecture", "large refactor", "root cause", "incident", "release", "compliance", "audit", "benchmark",
+        "ทั้งระบบ", "ระบบจริง", "โปรดักชัน", "ความปลอดภัย", "ช่องโหว่", "สิทธิ์", "ชำระเงิน", "ฐานข้อมูล", "ไมเกรต", "สถาปัตยกรรม", "รีแฟกเตอร์", "หาสาเหตุ", "แก้บั๊กซับซ้อน", "ตรวจทั้งโปรเจกต์"
+      ],
+      "models": ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.6-terra"]
+    },
+    "ultra": {
+      "effort": "ultra",
+      "pending_effort": "xhigh",
+      "requires_approval": true,
+      "signals": [
+        "multi-agent", "multi agent", "whole codebase", "mission critical", "critical incident", "major migration", "largest", "หลายเอเจนต์", "มอบงานหลาย", "ทั้งโค้ดเบส", "ทั้ง codebase", "ภารกิจใหญ่", "วิกฤต", "ย้ายระบบครั้งใหญ่"
+      ],
+      "models": ["gpt-5.6-sol", "gpt-5.5", "gpt-5.4", "gpt-5.6-terra"]
+    }
+  },
+  "thresholds": {"fast_max_chars": 1400, "deep_min_chars": 4000, "ultra_min_chars": 10000},
+  "voice": {
+    "trigger": "เลขาคิม",
+    "pronoun": "ฉัน",
+    "suffix": "ค่ะ",
+    "instruction": "เมื่อถูกเรียกว่า เลขาคิม ให้ตอบภาษาไทย ใช้สรรพนาม ฉัน และลงท้ายด้วย ค่ะ",
+    "blocked_message": "ยังตรวจสอบ voice bootstrap ของเลขาคิมไม่สำเร็จ จึงไม่เริ่มงานสาระสำคัญค่ะ"
+  }
+}

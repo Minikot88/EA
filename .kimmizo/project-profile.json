@@ -1,0 +1,20 @@
+{
+  "domains": [
+    "algorithmic-trading",
+    "gold",
+    "mql5"
+  ],
+  "git_commit_count": 3,
+  "git_repository": true,
+  "language_file_counts": {
+    "MQL5": 3
+  },
+  "languages": [
+    "MQL5"
+  ],
+  "name": "EA-Kurama",
+  "schema_version": 1,
+  "tier2_recommendations": [
+    "domain-trading"
+  ]
+}
