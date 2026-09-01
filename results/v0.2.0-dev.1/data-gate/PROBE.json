@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "tested_at": "2026-09-01",
+  "terminal": "MetaTrader 5 build 6140",
+  "broker_server": "XSFintech-REAL-2",
+  "symbol": "XAUUSDc",
+  "model": "every_tick_based_on_real_ticks",
+  "requested_from": "2021-01-04",
+  "requested_to_exclusive": "2021-01-05",
+  "runtime_seconds": 49.673,
+  "terminal_exit_code": 0,
+  "report_created": true,
+  "tick_file_202101_created": false,
+  "server_history_from": "2023-09-06",
+  "tester_message": "no history data from 2021.01.04 00:00 to 2021.01.05 00:00",
+  "status": "blocked"
+}

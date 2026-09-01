@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "tested_at": "2026-09-01",
+  "purpose": "Verify that MT5 can load and execute the locked three-input Temporal CNN ONNX architecture.",
+  "terminal": "MetaTrader 5 build 6140",
+  "broker_server": "XSFintech-REAL-2",
+  "symbol": "XAUUSDc",
+  "model_status": "synthetic_untrained_temporary_probe",
+  "model_committed": false,
+  "input_shapes": {
+    "m5": [1, 96, 8],
+    "m15": [1, 96, 8],
+    "h1": [1, 48, 8]
+  },
+  "output_shape": [1, 3],
+  "compile": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "python_probabilities": [0.315484703, 0.337257236, 0.347258121],
+  "mql5_probabilities": [0.315484703, 0.337257236, 0.347258121],
+  "printed_precision_max_abs_diff": 0.0,
+  "sample_count": 1,
+  "runtime_status": "success",
+  "production_parity_gate": {
+    "required_samples": 1000,
+    "max_abs_diff": 0.00001,
+    "status": "not_run_data_gate_blocked"
+  }
+}

@@ -1,0 +1,28 @@
+[project]
+name = "kurama-ml"
+version = "0.2.0.dev1"
+description = "Reproducible Temporal CNN training and ONNX export for Kurama"
+requires-python = ">=3.13"
+dependencies = [
+  "numpy>=2.2,<3",
+  "onnx>=1.17,<2",
+  "onnxruntime>=1.20,<2",
+  "pandas>=2.2,<3",
+  "scikit-learn>=1.6,<2",
+  "torch>=2.7,<3",
+]
+
+[dependency-groups]
+dev = ["pytest>=8,<9"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cpu" }

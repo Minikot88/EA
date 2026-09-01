@@ -21,3 +21,11 @@ Thumbs.db
 # Python runtime caches
 __pycache__/
 *.py[cod]
+.pytest_cache/
+.venv/
+.uv-cache/
+ml/data/raw/
+ml/data/processed/
+ml/runs/
+*.pt
+*.pth

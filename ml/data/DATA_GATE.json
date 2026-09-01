@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "status": "blocked",
+  "broker_server": "XSFintech-REAL-2",
+  "symbol": "XAUUSDc",
+  "required": {
+    "bars_from": "2021-01-01",
+    "bars_to": "2026-08-31",
+    "real_ticks_from": "2021-01-01",
+    "real_ticks_to": "2026-08-31",
+    "virtual_original_mt5_parity": true,
+    "python_onnx_mql_samples": 1000,
+    "python_onnx_mql_max_abs_diff": 0.00001,
+    "minimum_buy_labels": 5000,
+    "minimum_sell_labels": 5000,
+    "minimum_skip_labels": 10000
+  },
+  "observed": {
+    "server_history_from": "2023-09-06",
+    "bar_files": ["2024", "2025", "2026"],
+    "real_tick_months": [
+      "2026-01", "2026-02", "2026-03", "2026-04", "2026-05",
+      "2026-06", "2026-07", "2026-08", "2026-09"
+    ],
+    "real_tick_coverage_from": "2026-01-01",
+    "real_tick_coverage_to": "2026-09-01",
+    "bar_coverage_from": "2023-09-06",
+    "bar_coverage_to": "2026-09-01",
+    "buy_labels": 0,
+    "sell_labels": 0,
+    "skip_labels": 0,
+    "probe_2021_status": "no_history_data",
+    "virtual_original_mt5_parity_status": "not_run",
+    "python_onnx_mql_parity_status": "not_run",
+    "python_onnx_mql_samples": 0,
+    "python_onnx_mql_max_abs_diff": null
+  },
+  "training_allowed": false,
+  "reason": "The current broker does not provide the required 2021-2023 history or 2021-2025 real ticks; virtual-Original MT5 parity and 1,000-sample ONNX parity are also not complete."
+}
