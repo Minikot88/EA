@@ -21,6 +21,7 @@ from ml.counterfactual_labels import (
     validate_class_gate,
 )
 from ml.feature_extraction import OHLCVBar, extract_multitimeframe_features
+from ml.hybrid_data_contract import HYBRID_SPLITS
 from ml.virtual_original_basket import OriginalConfig, Tick, simulate_original_basket
 
 
@@ -32,6 +33,7 @@ PURGE_HOURS = 24
 @dataclass(frozen=True)
 class DatasetSample:
     timestamp: datetime
+    source: str
     m5: np.ndarray
     m15: np.ndarray
     h1: np.ndarray
@@ -57,6 +59,7 @@ def build_counterfactual_sample(
     h1: Sequence[OHLCVBar],
     ticks: Sequence[Tick],
     original_config: OriginalConfig,
+    source: str = "Dukascopy",
 ) -> DatasetSample:
     """Build one sample from already closed bars and a forward real-tick slice."""
 
@@ -101,6 +104,7 @@ def build_counterfactual_sample(
     )
     return DatasetSample(
         timestamp=timestamp,
+        source=source,
         m5=features["m5"],
         m15=features["m15"],
         h1=features["h1"],
@@ -112,30 +116,44 @@ def build_counterfactual_sample(
 
 _START = datetime(2021, 1, 1, tzinfo=timezone.utc)
 _VALIDATION = datetime(2025, 1, 1, tzinfo=timezone.utc)
-_OOS = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_XS_START = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_OOS = datetime(2026, 3, 1, tzinfo=timezone.utc)
 _HOLDOUT = datetime(2026, 7, 1, tzinfo=timezone.utc)
 _END = datetime(2026, 9, 1, tzinfo=timezone.utc)
-_BOUNDARIES = (_VALIDATION, _OOS, _HOLDOUT)
 
 
-def locked_split(timestamp: datetime) -> str | None:
-    """Assign the immutable split or exclude a sample inside a 24-hour purge gap."""
+def locked_split(timestamp: datetime, source: str | None = None) -> str | None:
+    """Assign a source-bound Hybrid split or exclude its exact purge edges."""
 
     if timestamp.tzinfo is None:
         raise ValueError("split timestamp must be timezone-aware")
     timestamp = timestamp.astimezone(timezone.utc)
-    if timestamp < _START or timestamp >= _END:
-        return None
     gap = timedelta(hours=PURGE_HOURS)
-    if any(boundary - gap <= timestamp <= boundary + gap for boundary in _BOUNDARIES):
-        return None
-    if timestamp < _VALIDATION:
-        return "train"
-    if timestamp < _OOS:
-        return "validation"
-    if timestamp < _HOLDOUT:
-        return "locked_oos"
-    return "final_holdout"
+    if source is None:
+        source = "Dukascopy" if timestamp < _XS_START else "XSFintech-REAL-2"
+    if source == "Dukascopy":
+        if timestamp < _START or timestamp >= _XS_START:
+            return None
+        if any(
+            boundary - gap <= timestamp <= boundary + gap
+            for boundary in (_VALIDATION, _XS_START)
+        ):
+            return None
+        return "train" if timestamp < _VALIDATION else "validation"
+    if source == "XSFintech-REAL-2":
+        if timestamp < _XS_START or timestamp >= _END:
+            return None
+        if any(
+            boundary - gap <= timestamp <= boundary + gap
+            for boundary in (_XS_START, _OOS, _HOLDOUT, _END)
+        ):
+            return None
+        if timestamp < _OOS:
+            return "calibration"
+        if timestamp < _HOLDOUT:
+            return "locked_oos"
+        return "final_holdout"
+    raise ValueError("sample source must be Dukascopy or XSFintech-REAL-2")
 
 
 def _sha256_file(path: Path) -> str:
@@ -159,11 +177,14 @@ def write_dataset_and_manifest(
     real_tick_coverage_from: str,
     real_tick_coverage_to: str,
     original_config: OriginalConfig,
+    download_manifest_path: Path,
     enforce_gate: bool = True,
 ) -> dict[str, object]:
     """Write ignored NPZ data and a commit-safe reproducibility manifest."""
 
-    retained = [(sample, locked_split(sample.timestamp)) for sample in samples]
+    retained = [
+        (sample, locked_split(sample.timestamp, sample.source)) for sample in samples
+    ]
     retained = [(sample, split) for sample, split in retained if split is not None]
     if not retained:
         raise ValueError("no samples remain after locked ranges and purge gaps")
@@ -183,14 +204,30 @@ def write_dataset_and_manifest(
             [sample.timestamp.isoformat() for sample, _ in retained], dtype="U32"
         ),
         splits=np.asarray([split for _, split in retained], dtype="U16"),
+        sources=np.asarray([sample.source for sample, _ in retained], dtype="U20"),
     )
     split_counts = Counter(split for _, split in retained)
+    split_time_bounds = {
+        split: {
+            "first": min(
+                sample.timestamp for sample, sample_split in retained if sample_split == split
+            ).isoformat(),
+            "last": max(
+                sample.timestamp for sample, sample_split in retained if sample_split == split
+            ).isoformat(),
+        }
+        for split in HYBRID_SPLITS
+        if split_counts[split] > 0
+    }
     label_counts = Counter(sample.label for sample, _ in retained)
     training_label_counts = Counter(
         sample.label for sample, split in retained if split == "train"
     )
     manifest: dict[str, object] = {
         "schema_version": 1,
+        "data_contract": "hybrid_dukascopy_xs_v1",
+        "training_source": "Dukascopy",
+        "source_symbol": "XAUUSD",
         "broker_server": broker_server,
         "symbol": symbol,
         "bar_coverage": {
@@ -201,22 +238,44 @@ def write_dataset_and_manifest(
             "from": real_tick_coverage_from,
             "to": real_tick_coverage_to,
         },
+        "source_coverage": {
+            "Dukascopy": {
+                "source_symbol": "XAUUSD",
+                "from": "2021-01-01",
+                "to": "2025-12-31",
+            },
+            "XSFintech-REAL-2": {
+                "target_symbol": "XAUUSDc",
+                "calibration": "2026-01-01/2026-02-28",
+                "locked_oos": "2026-03-01/2026-06-30",
+                "final_holdout": "2026-07-01/2026-08-31",
+            },
+        },
+        "dataset_path": str(dataset_path),
         "dataset_sha256": _sha256_file(dataset_path),
+        "download_manifest_sha256": _sha256_file(Path(download_manifest_path)),
         "source_sha256": {
             name: _sha256_file(Path(path)) for name, path in sorted(source_files.items())
         },
+        "source_files": {
+            name: {"path": str(path), "sha256": _sha256_file(Path(path))}
+            for name, path in sorted(source_files.items())
+        },
         "sample_count": len(retained),
         "split_counts": dict(sorted(split_counts.items())),
+        "split_time_bounds": split_time_bounds,
         "label_counts": {label: label_counts[label] for label in (BUY, SELL, SKIP)},
         "training_label_counts": {
             label: training_label_counts[label] for label in (BUY, SELL, SKIP)
         },
         "class_gate": LOCKED_MINIMUMS,
         "purge_hours": PURGE_HOURS,
+        "splits": HYBRID_SPLITS,
         "ranges": {
             "train": "2021-01-01/2024-12-31",
             "validation": "2025-01-01/2025-12-31",
-            "locked_oos": "2026-01-01/2026-06-30",
+            "calibration": "2026-01-01/2026-02-28",
+            "locked_oos": "2026-03-01/2026-06-30",
             "final_holdout": "2026-07-01/2026-08-31",
         },
         "original_config": asdict(original_config),

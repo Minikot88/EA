@@ -16,11 +16,12 @@ def test_current_data_gate_blocks_training_honestly() -> None:
     data = json.loads(GATE.read_text(encoding="utf-8"))
     assert data["status"] == "blocked"
     assert data["training_allowed"] is False
-    assert data["required"]["real_ticks_from"] == "2021-01-01"
-    assert data["observed"]["server_history_from"] == "2023-09-06"
-    assert data["observed"]["probe_2021_status"] == "no_history_data"
-    assert "2026-01" in data["observed"]["real_tick_months"]
-    assert "2025-01" not in data["observed"]["real_tick_months"]
+    assert data["contract"] == "hybrid_dukascopy_xs_v1"
+    assert data["sources"]["training_validation"]["provider"] == "Dukascopy"
+    assert data["sources"]["training_validation"]["from"] == "2021-01-01"
+    assert data["sources"]["execution_validation"]["broker_server"] == "XSFintech-REAL-2"
+    assert data["observed"]["xs_server_history_from"] == "2023-09-06"
+    assert data["observed"]["dukascopy_files_complete"] is False
     assert data["observed"]["virtual_original_mt5_parity_status"] == "not_run"
     assert data["required"]["python_onnx_mql_samples"] == 1000
 
@@ -69,10 +70,11 @@ def test_ready_evidence_still_requires_hashed_receipts(tmp_path: Path) -> None:
     data["training_allowed"] = True
     data["observed"].update(
         {
-            "bar_coverage_from": "2021-01-01",
-            "bar_coverage_to": "2026-08-31",
-            "real_tick_coverage_from": "2021-01-01",
-            "real_tick_coverage_to": "2026-08-31",
+            "dukascopy_download_status": "audited",
+            "dukascopy_files_complete": True,
+            "dukascopy_months_complete": 60,
+            "dukascopy_coverage_from": "2021-01-01",
+            "dukascopy_coverage_to": "2025-12-31",
             "buy_labels": 5_000,
             "sell_labels": 5_000,
             "skip_labels": 10_000,
@@ -94,10 +96,11 @@ def test_hashed_arbitrary_repository_files_cannot_pose_as_receipts(tmp_path: Pat
     data["training_allowed"] = True
     data["observed"].update(
         {
-            "bar_coverage_from": "2021-01-01",
-            "bar_coverage_to": "2026-08-31",
-            "real_tick_coverage_from": "2021-01-01",
-            "real_tick_coverage_to": "2026-08-31",
+            "dukascopy_download_status": "audited",
+            "dukascopy_files_complete": True,
+            "dukascopy_months_complete": 60,
+            "dukascopy_coverage_from": "2021-01-01",
+            "dukascopy_coverage_to": "2025-12-31",
             "buy_labels": 5_000,
             "sell_labels": 5_000,
             "skip_labels": 10_000,
@@ -111,9 +114,14 @@ def test_hashed_arbitrary_repository_files_cannot_pose_as_receipts(tmp_path: Pat
     digest = hashlib.sha256(arbitrary.read_bytes()).hexdigest()
     data["receipts"] = {
         name: {"path": "README.md", "sha256": digest}
-        for name in ("dataset_manifest", "virtual_original_parity", "onnx_parity")
+        for name in (
+            "dukascopy_download_manifest",
+            "dataset_manifest",
+            "virtual_original_parity",
+            "onnx_parity",
+        )
     }
     forged = tmp_path / "ready-with-arbitrary-receipts.json"
     forged.write_text(json.dumps(data), encoding="utf-8")
-    with pytest.raises(RuntimeError, match="invalid dataset_manifest receipt JSON"):
+    with pytest.raises(RuntimeError, match="invalid dukascopy_download_manifest receipt JSON"):
         assert_training_allowed(forged)

@@ -29,10 +29,12 @@
 
 ## Locked time splits and gates
 
-- Train 2021-2024, validation 2025, locked OOS 2026H1 and untouched holdout 2026-07 through 2026-08.
+- Train 2021-2024 and Validation 2025 use Dukascopy XAUUSD Bid/Ask ticks only.
+- XS Jan-Feb 2026 is Calibration only; Locked OOS is Mar-Jun 2026; Final Holdout is Jul-Aug 2026.
+- Exness is external multi-broker stress only and cannot select the model.
 - Purge 24 hours at every split boundary.
 - Require at least 5,000 BUY, 5,000 SELL and 10,000 SKIP labels.
-- Current XSFintech history fails this gate; training remains prohibited until data is supplied.
+- Training remains prohibited until all 60 Dukascopy months, class counts and parity receipts pass.
 - Final trading gates: 3-5% simple average per trading day, PF >= 1.20, DD <= 30%, no StopOut and a non-overlapping OOS pass.
 - No automatic equity stop is added.
 

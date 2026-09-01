@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "tested_at": "2026-09-02",
+  "status": "partial_rate_limited",
+  "source": "Dukascopy",
+  "source_symbol": "XAUUSD",
+  "downloader": "dukascopy-node@1.50.0",
+  "tool_package_lock_sha256": "bc17ffc53903c75d828eabb6e5855e012f04829365ced3482bc46fe09ad2c213",
+  "months_required": 60,
+  "months_audited": 2,
+  "months_missing": 58,
+  "audited": {
+    "2021-01": {
+      "sha256": "83316c5d7a59090e5682bad250a9c5e09a5485f11e21ddd2f32ee802bd6240c4",
+      "bytes": 151845077,
+      "quote_count": 4751517,
+      "first_timestamp_ms": 1609714800413,
+      "last_timestamp_ms": 1612137599722,
+      "minimum_bid": 1802.948,
+      "maximum_ask": 1959.632,
+      "maximum_spread": 5.436999999999898
+    },
+    "2021-02": {
+      "sha256": "6acedf2d508e77fdf04e513c163208327a9204fe767907d51e95f99650edda8f",
+      "bytes": 167419276,
+      "quote_count": 5243959,
+      "first_timestamp_ms": 1612137600151,
+      "last_timestamp_ms": 1614556799960,
+      "minimum_bid": 1717.09,
+      "maximum_ask": 1872.185,
+      "maximum_spread": 2.1259999999999764
+    }
+  },
+  "failed_month": "2021-03",
+  "failure": "HTTP 429 from public Dukascopy JSON API after repeated safe-batch retries",
+  "training_allowed": false
+}

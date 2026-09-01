@@ -2,6 +2,8 @@
 
 ## Unreleased v0.2.0-dev.1 infrastructure
 
+- Replaced the unavailable XS 2021-2025 requirement with an explicitly source-isolated Hybrid contract: Dukascopy Train/Validation and XS Calibration/OOS/Holdout.
+- Added pinned monthly Dukascopy acquisition, streaming quote audits, resumable state and download-manifest hashes.
 - Added closed-bar M5/M15/H1 feature extraction and counterfactual BUY/SELL/SKIP label policy.
 - Added a virtual Original one-sided basket simulator that preserves first lot 0.01, grid recovery, lot normalization and the Original BUY/SELL MaxOrder asymmetry.
 - Added immutable train/validation/OOS/holdout splits with 24-hour purge gaps and class-specific data gates.

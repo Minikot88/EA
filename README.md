@@ -7,7 +7,7 @@ Kurama is a versioned MetaTrader 5 Expert Advisor project derived from EA Susano
 - Latest development: `v0.1.0` Original Kurama baseline
 - Approved for Use: none
 - Next authorized development: `v0.2.0-dev.1` Original AND Temporal CNN ML Quant
-- Quant workbench: project-local `uv` environment tests pass; product model training remains blocked because required 2021-2025 real ticks are not available locally
+- Quant workbench: Hybrid acquisition approved — Dukascopy Train/Validation plus strictly locked XS Calibration/OOS/Holdout; product training remains blocked until all download and parity receipts pass
 
 ## Baseline
 

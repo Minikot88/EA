@@ -23,6 +23,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 .venv/
+node_modules/
 .uv-cache/
 ml/data/raw/
 ml/data/processed/

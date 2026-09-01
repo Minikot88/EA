@@ -11,7 +11,7 @@ def test_locked_time_splits_and_twenty_four_hour_purge_are_immutable() -> None:
     utc = timezone.utc
     assert locked_split(datetime(2024, 6, 1, tzinfo=utc)) == "train"
     assert locked_split(datetime(2025, 6, 1, tzinfo=utc)) == "validation"
-    assert locked_split(datetime(2026, 3, 1, tzinfo=utc)) == "locked_oos"
+    assert locked_split(datetime(2026, 3, 2, 1, tzinfo=utc)) == "locked_oos"
     assert locked_split(datetime(2026, 8, 1, tzinfo=utc)) == "final_holdout"
     boundary = datetime(2026, 1, 1, tzinfo=utc)
     assert locked_split(boundary - timedelta(hours=23)) is None
@@ -19,7 +19,7 @@ def test_locked_time_splits_and_twenty_four_hour_purge_are_immutable() -> None:
     assert locked_split(boundary - timedelta(hours=24)) is None
     assert locked_split(boundary + timedelta(hours=24)) is None
     assert locked_split(boundary - timedelta(hours=24, seconds=1)) == "validation"
-    assert locked_split(boundary + timedelta(hours=24, seconds=1)) == "locked_oos"
+    assert locked_split(boundary + timedelta(hours=24, seconds=1)) == "calibration"
 
 
 def test_dataset_builder_rejects_future_bar_even_if_marked_closed() -> None:
@@ -77,3 +77,9 @@ def test_candidate_timestamp_must_equal_first_forward_tick() -> None:
             ticks=[Tick(candidate.timestamp() + 1, 99.9, 100.1)],
             original_config=OriginalConfig(),
         )
+
+
+def test_hybrid_split_names_include_calibration_and_march_oos() -> None:
+    utc = timezone.utc
+    assert locked_split(datetime(2026, 1, 3, tzinfo=utc), "XSFintech-REAL-2") == "calibration"
+    assert locked_split(datetime(2026, 3, 3, tzinfo=utc), "XSFintech-REAL-2") == "locked_oos"

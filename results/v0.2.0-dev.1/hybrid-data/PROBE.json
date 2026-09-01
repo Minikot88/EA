@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "tested_at": "2026-09-02",
+  "source": "Dukascopy",
+  "source_symbol": "XAUUSD",
+  "json_api_downloader": "dukascopy-node@1.50.0",
+  "downloader_npm_integrity": "sha512-o2Co/asUD/TXFNhblJUYkRseHMt/uvFrnhzOKWezLuiFJqbl4Zn2oJGL4/W+PY1b2YsI11+9+TO40qNQBAj8/w==",
+  "downloader_npm_shasum": "25ce461e28ae4ad37d74bcd2f2656e8266301062",
+  "tool_package_lock_sha256": "bc17ffc53903c75d828eabb6e5855e012f04829365ced3482bc46fe09ad2c213",
+  "reference_format": "hourly BI5",
+  "reference_hour_utc": "2024-01-02T00:00:00Z",
+  "hour_quote_count": 2948,
+  "all_timestamps_bid_ask_exact": true,
+  "first_quote": [1704153600130, 2063.625, 2063.996],
+  "last_quote": [1704157191087, 2065.358, 2065.685],
+  "bi5_sha256": "c7eefab4bc9681471a92ad6b4a8d9ab94375cd0708d8b24c2b786813dfe4902b",
+  "json_api_day_csv_sha256": "49fb3899542f07f723aabfa3f51f556b5e011a757ecabb3ae34031638beda1e9",
+  "status": "passed"
+}

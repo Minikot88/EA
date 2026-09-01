@@ -1,40 +1,58 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "contract": "hybrid_dukascopy_xs_v1",
   "status": "blocked",
-  "broker_server": "XSFintech-REAL-2",
-  "symbol": "XAUUSDc",
+  "training_allowed": false,
+  "sources": {
+    "training_validation": {
+      "provider": "Dukascopy",
+      "source_symbol": "XAUUSD",
+      "from": "2021-01-01",
+      "to": "2025-12-31",
+      "timezone": "UTC",
+      "quote_fields": ["timestamp_ms", "bid", "ask"]
+    },
+    "execution_validation": {
+      "broker_server": "XSFintech-REAL-2",
+      "target_symbol": "XAUUSDc",
+      "from": "2026-01-01",
+      "to": "2026-08-31"
+    }
+  },
+  "splits": {
+    "train": {"source": "Dukascopy", "range": "2021-01-01/2024-12-31"},
+    "validation": {"source": "Dukascopy", "range": "2025-01-01/2025-12-31"},
+    "calibration": {"source": "XSFintech-REAL-2", "range": "2026-01-01/2026-02-28"},
+    "locked_oos": {"source": "XSFintech-REAL-2", "range": "2026-03-01/2026-06-30"},
+    "final_holdout": {"source": "XSFintech-REAL-2", "range": "2026-07-01/2026-08-31"}
+  },
   "required": {
-    "bars_from": "2021-01-01",
-    "bars_to": "2026-08-31",
-    "real_ticks_from": "2021-01-01",
-    "real_ticks_to": "2026-08-31",
-    "virtual_original_mt5_parity": true,
-    "python_onnx_mql_samples": 1000,
-    "python_onnx_mql_max_abs_diff": 0.00001,
+    "purge_hours": 24,
+    "dukascopy_months": 60,
     "minimum_buy_labels": 5000,
     "minimum_sell_labels": 5000,
-    "minimum_skip_labels": 10000
+    "minimum_skip_labels": 10000,
+    "virtual_original_mt5_parity": true,
+    "python_onnx_mql_samples": 1000,
+    "python_onnx_mql_max_abs_diff": 0.00001
   },
   "observed": {
-    "server_history_from": "2023-09-06",
-    "bar_files": ["2024", "2025", "2026"],
-    "real_tick_months": [
-      "2026-01", "2026-02", "2026-03", "2026-04", "2026-05",
-      "2026-06", "2026-07", "2026-08", "2026-09"
-    ],
-    "real_tick_coverage_from": "2026-01-01",
-    "real_tick_coverage_to": "2026-09-01",
-    "bar_coverage_from": "2023-09-06",
-    "bar_coverage_to": "2026-09-01",
+    "dukascopy_download_status": "partial_rate_limited",
+    "dukascopy_files_complete": false,
+    "dukascopy_months_complete": 2,
+    "dukascopy_coverage_from": "2021-01-01",
+    "dukascopy_coverage_to": "2021-02-28",
+    "xs_server_history_from": "2023-09-06",
+    "xs_real_tick_coverage_from": "2026-01-01",
+    "xs_real_tick_coverage_to": "2026-09-01",
     "buy_labels": 0,
     "sell_labels": 0,
     "skip_labels": 0,
-    "probe_2021_status": "no_history_data",
     "virtual_original_mt5_parity_status": "not_run",
     "python_onnx_mql_parity_status": "not_run",
     "python_onnx_mql_samples": 0,
     "python_onnx_mql_max_abs_diff": null
   },
-  "training_allowed": false,
-  "reason": "The current broker does not provide the required 2021-2023 history or 2021-2025 real ticks; virtual-Original MT5 parity and 1,000-sample ONNX parity are also not complete."
+  "receipts": null,
+  "reason": "Hybrid contract approved. January-February 2021 are audited, but the public Dukascopy API rate-limited March with HTTP 429; 58 months, dataset labels and both parity gates remain incomplete."
 }
