@@ -5,7 +5,7 @@
 //+------------------------------------------------------------------+
 #property copyright "Copyright 2026, MetaQuotes Ltd."
 #property link      "https://www.mql5.com"
-#property version   "1.10"
+#property version   "2.1"
 #include <Trade\Trade.mqh>
 #include <Trade\PositionInfo.mqh>
 #include <Trade\OrderInfo.mqh>
@@ -16,12 +16,6 @@
 CTrade         Trade;
 CPositionInfo  m_position; 
 COrderInfo     m_order;
-
-enum mlot
-  {
-   lot_plus,       // Plus
-   lot_multiply,  // Multiply
-  };
 
 enum mTrade
   {
@@ -40,6 +34,15 @@ enum mFirstEntry
       Entry_MA_Candle        // MA filter + candle color
   };  
 
+enum ENUM_EA_TRADE_OPERATION
+  {
+   TRADE_OP_MARKET_OPEN,
+   TRADE_OP_PENDING_CREATE,
+   TRADE_OP_CLOSE,
+   TRADE_OP_DELETE,
+   TRADE_OP_MODIFY
+  };
+
 //+------------------------------------------------------------------+
 //| Expert input function                                            |
 //+------------------------------------------------------------------+
@@ -56,9 +59,7 @@ input int      Pending                 = 100;
 
 input string   __lot__                 = "";             // ---------------|| Lot Setting
 input double   Lots                    = 0.01;           // Lots
-input mlot     LotType                 = lot_plus;       // Lot Type
 input double   LotPlus                 = 0.01;           // Plus
-input double   LotExponent             = 1.5;            // Multiplier
 input double   MaxLot                  = 3.0;            // Max Lot
 
 input string   __CLOSE__               = "=============== Close Setting ===============";
@@ -79,6 +80,14 @@ input bool     UseTime                 = true;
 input string   TimeStart               = "00:00";
 input string   TimeEnd                 = "23:59"; 
 
+input string   __NEWS__                 = "=============== News Safety Filter ===============";
+input bool     UseNewsFilter            = true;
+input string   NewsCurrency             = "USD";
+input int      NewsImportance           = 2;             // 2 = high impact
+input int      NewsStopMinutes          = 30;
+input int      NewsHardCloseMinutes     = 15;
+input int      NewsResumeMinutes        = 60;
+
 input string   __MA__                  = "=============== Moving Average Trade ===============";
 input int      MA1                     = 50;             // Period
 input ENUM_MA_METHOD      MA_METHOD1   = MODE_EMA;       // MA Method
@@ -87,12 +96,12 @@ input ENUM_APPLIED_PRICE  MA_PRICE1    = PRICE_CLOSE;    // Applied to
 input string   SetComment              = "=============== Comment Setting ===============";
 input bool     ShowComment             = true;           // Comment
 
-int            OpenOrders=0, cnt=0;
-int            myOrderType=0;
+int            OpenOrders=0;
 int            CountB, CountS;
 int            CountBS, CountSS;
 int            BarB, BarS, count;
-int            CountBar, LastBar;
+int            CountBar, LastBarBuy, LastBarSell;
+datetime       RecoveryRetryAfterBuy=0, RecoveryRetryAfterSell=0;
 
 datetime       time_open;
 bool           success;
@@ -102,7 +111,7 @@ bool           AutoRun = true;
 string         EaName;
 double         BuyPrice=0, SellPrice=0;
 double         mylotsi=0;
-double         SL,TP;
+ double         TP;
 double         Profit;
 double         LastLotsBuy, LastLotsSell;
 double         SumProfitBuy, SumProfitSell;
@@ -113,9 +122,6 @@ double         B_Average = 0;
 double         S_LotPrice= 0;
 double         S_Average = 0;
 double         Bid, Ask, pips;
-double         MaxDD, DDcurr, MaxDDcurr, MarginLevel;
-double         MinLot, LastLots;
-double         FirstLotB, FirstLotS, LastPrice;
 double         MinPriceBuy, MaxPriceBuy;
 double         MinPriceSell, MaxPriceSell;
 
@@ -124,7 +130,23 @@ double         profit_max_sell, profit_min_sell;
 ulong          tick_max_buy, tick_min_buy;
 ulong          tick_max_sell, tick_min_sell;
 
-double         C1, EMA1;
+int            MaHandle=INVALID_HANDLE;
+MqlCalendarValue NewsValues[];
+datetime       NewsCacheAt=0;
+datetime       NewsLastAttempt=0;
+datetime       NewsLastErrorLog=0;
+bool           NewsCacheValid=false;
+datetime       NewsNextTime=0;
+string         NewsNextName="-";
+bool           newsTradeLocked=false;
+bool           newsLiquidationPending=false;
+datetime       newsLockUntil=0;
+double         DailyPeakEquity=0, DailyMaxDDMoney=0, DailyMaxDDPercent=0;
+double         PortfolioPeakEquity=0, PortfolioMaxDDMoney=0, PortfolioMaxDDPercent=0;
+datetime       DailyTrackingDay=0;
+double         CachedProfitToday=0;
+datetime       ProfitCacheDay=0;
+datetime       ProfitCacheAt=0;
 
 //+------------------------------------------------------------------+
 //| Expert initialization function                                   |
@@ -140,7 +162,28 @@ int OnInit()
      }
 
    Trade.SetExpertMagicNumber(MagicNumber);      
+   Trade.SetAsyncMode(false);
    EaName = MQLInfoString(MQL_PROGRAM_NAME); 
+
+   if(FirstEntryMode==Entry_MA_Filter || FirstEntryMode==Entry_MA_Cross || FirstEntryMode==Entry_MA_Candle)
+     {
+      MaHandle=iMA(_Symbol,TimeFrame,MA1,0,MA_METHOD1,MA_PRICE1);
+      if(MaHandle==INVALID_HANDLE)
+         return(INIT_FAILED);
+     }
+
+   EventSetTimer(1);
+   if(!MQLInfoInteger(MQL_TESTER))
+      RefreshNewsCache(true);
+   else
+     {
+      NewsCacheValid=true;
+      NewsNextTime=0;
+      NewsNextName="TESTER";
+     }
+   RestoreDrawdownTracking();
+   RefreshDailyProfitCache(true);
+   EnforceNewsSafety();
 
    for(int i=0;i<30;i++)
      {
@@ -173,6 +216,29 @@ void OnDeinit(const int reason)
   {
    DeleteOldButtons();
    DeleteDashboardObjects();
+   EventKillTimer();
+   if(MaHandle!=INVALID_HANDLE)
+     {
+      IndicatorRelease(MaHandle);
+      MaHandle=INVALID_HANDLE;
+     }
+  }
+
+void OnTimer()
+  {
+   EnforceNewsSafety();
+   RefreshDailyProfitCache(false);
+   UpdateDrawdownTracking();
+   if(ShowComment)
+      Information();
+  }
+
+void OnTradeTransaction(const MqlTradeTransaction &trans,
+                        const MqlTradeRequest &request,
+                        const MqlTradeResult &result)
+  {
+   if(trans.type==TRADE_TRANSACTION_DEAL_ADD)
+      RefreshDailyProfitCache(true);
   }
 
 //+------------------------------------------------------------------+
@@ -210,6 +276,11 @@ void OnTick()
    LastLotsBuy     = 0; 
    LastLotsSell    = 0;
 
+   ulong newestBuyMsc=0;
+   ulong newestSellMsc=0;
+   ulong newestBuyTicket=0;
+   ulong newestSellTicket=0;
+
    MinPriceSell    = 0;
    MaxPriceSell    = 0;
    tick_max_sell   = 0;
@@ -237,11 +308,19 @@ void OnTick()
               {				
                CountS++;
                time_open      = (datetime)PositionGetInteger(POSITION_TIME); 
-               BarS           = iBarShift(Symbol(),TimeFrame,time_open);
                S_Lot          += PositionGetDouble(POSITION_VOLUME);
                S_LotPrice     += PositionGetDouble(POSITION_VOLUME)*PositionGetDouble(POSITION_PRICE_OPEN);
-               LastLotsSell   = PositionGetDouble(POSITION_VOLUME);
                SumProfitSell  = SumProfitSell + PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);  
+
+               ulong sellMsc=(ulong)PositionGetInteger(POSITION_TIME_MSC);
+               ulong sellTicket=(ulong)PositionGetInteger(POSITION_TICKET);
+               if(sellMsc>newestSellMsc || (sellMsc==newestSellMsc && sellTicket>newestSellTicket))
+                 {
+                  newestSellMsc=sellMsc;
+                  newestSellTicket=sellTicket;
+                  LastLotsSell=PositionGetDouble(POSITION_VOLUME);
+                  BarS=iBarShift(Symbol(),TimeFrame,time_open);
+                 }
 
                if(PositionGetDouble(POSITION_PRICE_OPEN)>MaxPriceSell || MaxPriceSell==0)
                  {
@@ -262,11 +341,19 @@ void OnTick()
               {
                CountB++;
                time_open      = (datetime)PositionGetInteger(POSITION_TIME); 
-               BarB           = iBarShift(Symbol(),TimeFrame,time_open);
-               LastLotsBuy    = PositionGetDouble(POSITION_VOLUME);
                B_Lot          += PositionGetDouble(POSITION_VOLUME);
                B_LotPrice     += PositionGetDouble(POSITION_VOLUME)*PositionGetDouble(POSITION_PRICE_OPEN);
                SumProfitBuy   = SumProfitBuy + PositionGetDouble(POSITION_PROFIT) + PositionGetDouble(POSITION_SWAP);  
+
+               ulong buyMsc=(ulong)PositionGetInteger(POSITION_TIME_MSC);
+               ulong buyTicket=(ulong)PositionGetInteger(POSITION_TICKET);
+               if(buyMsc>newestBuyMsc || (buyMsc==newestBuyMsc && buyTicket>newestBuyTicket))
+                 {
+                  newestBuyMsc=buyMsc;
+                  newestBuyTicket=buyTicket;
+                  LastLotsBuy=PositionGetDouble(POSITION_VOLUME);
+                  BarB=iBarShift(Symbol(),TimeFrame,time_open);
+                 }
 
                if(PositionGetDouble(POSITION_PRICE_OPEN)<MinPriceBuy || MinPriceBuy==0)
                  {
@@ -284,7 +371,9 @@ void OnTick()
               }	
            }
         }			
-     }
+     }     
+
+   ResetRecoveryBarStateForClosedBaskets();
 
    CountBS = 0;
    CountSS = 0;
@@ -310,21 +399,6 @@ void OnTick()
         }
      }     
 
-   if(Profit<=MaxDD)
-     {
-      MaxDD = Profit;
-     }   
-
-   if(AccountInfoDouble(ACCOUNT_BALANCE)>0)
-     {
-      DDcurr = ((AccountInfoDouble(ACCOUNT_EQUITY)/AccountInfoDouble(ACCOUNT_BALANCE))*100)-100;
-     }
-
-   if(DDcurr<MaxDDcurr)
-     {
-      MaxDDcurr = ((AccountInfoDouble(ACCOUNT_EQUITY)/AccountInfoDouble(ACCOUNT_BALANCE))*100)-100;
-     }    
-
    if(B_Lot!=0 && B_LotPrice!=0)
       B_Average=NormalizeDouble(B_LotPrice/B_Lot,_Digits);
 
@@ -333,6 +407,14 @@ void OnTick()
 
    TPB = NormalizeDouble(B_Average+(TakeProfit*pips),_Digits);
    TPS = NormalizeDouble(S_Average-(TakeProfit*pips),_Digits);
+
+   bool newsLock=EnforceNewsSafety();
+   if(newsLock && newsLiquidationPending)
+      return;
+
+   // Risk/close decisions are evaluated before any new entry or recovery request.
+   if(RiskExitTriggered())
+      return;
 
    if(TakeProfit>0)
      {
@@ -346,7 +428,8 @@ void OnTick()
             PositionGetDouble(POSITION_TP)!=TPB &&
             PositionGetInteger(POSITION_MAGIC)==MagicNumber)
            {
-            Trade.PositionModify(ticket,PositionGetDouble(POSITION_SL),TPB);
+            bool modified=Trade.PositionModify(ticket,PositionGetDouble(POSITION_SL),TPB);
+            ValidateTradeResult("PositionModify",TRADE_OP_MODIFY,modified,ticket);
            }
 
          if(PositionGetSymbol(i)==Symbol() &&
@@ -355,7 +438,8 @@ void OnTick()
             PositionGetDouble(POSITION_TP)!=TPS &&
             PositionGetInteger(POSITION_MAGIC)==MagicNumber)
            {
-            Trade.PositionModify(ticket,PositionGetDouble(POSITION_SL),TPS);
+            bool modified=Trade.PositionModify(ticket,PositionGetDouble(POSITION_SL),TPS);
+            ValidateTradeResult("PositionModify",TRADE_OP_MODIFY,modified,ticket);
            }
         }
      }
@@ -368,8 +452,7 @@ void OnTick()
    CountBar = iBars(Symbol(),TimeFrame);
    Bid      = SymbolInfoDouble(_Symbol,SYMBOL_BID);
    Ask      = SymbolInfoDouble(_Symbol,SYMBOL_ASK);
-   C1       = iClose(Symbol(),TimeFrame,1);
-   EMA1     = GetMA();
+   double realizedProfitToday=CachedProfitToday;
 
    // ==============================
    // MODE BUY
@@ -379,8 +462,9 @@ void OnTick()
       if(CountB<1 &&
          FirstEntrySignal(true) &&
          AutoRun &&
+         !newsLock &&
          ContinuebyTime &&
-         (ProfitToday()<ProfitPerday || ProfitPerday==0))
+         (realizedProfitToday<ProfitPerday || ProfitPerday==0))
         {
          BuyPrice= Ask;
 
@@ -391,9 +475,7 @@ void OnTick()
 
          mylotsi = Lots;
          success = Trade.Buy(NormalizeLot(mylotsi),_Symbol,BuyPrice,0,TP,EaName+"-1");
-
-         Print("Buy 1");
-         Sleep(5000);
+         ValidateTradeResult("Buy",TRADE_OP_MARKET_OPEN,success,Trade.ResultDeal());
          return;
         }
      }
@@ -403,31 +485,16 @@ void OnTick()
    if(CountB>0 &&
       CountB<MaxOrder &&
       CountBS<1 &&
+      !newsLock &&
+      NewsNow()>=RecoveryRetryAfterBuy &&
       BarB>0 &&
-      CountBar!=LastBar &&
+      CountBar!=LastBarBuy &&
       BuyPrice<MinPriceBuy &&
       MinPriceBuy-Ask>Distance*pips &&
       MinPriceBuy>0)
      {       
-      LastBar = CountBar;
-      count = CheckLastOrder(POSITION_TYPE_BUY);
-      mylotsi= Lots;
-
-      if(LotType==lot_plus)
-        {
-         mylotsi=NormalizeDouble(LastLotsBuy+LotPlus,2);
-        }
-
-      if(LotType==lot_multiply)
-        {
-         mylotsi = Lots;
-
-         for(cnt=1;cnt<=count;cnt++)
-           {
-            LastLots=mylotsi;
-            mylotsi=NormalizeDouble(LastLots*LotExponent,8);
-           }
-        }
+       count = CheckLastOrder(POSITION_TYPE_BUY);
+       mylotsi=NormalizeDouble(LastLotsBuy+LotPlus,8);
 
       if(mylotsi>MaxLot)
         {
@@ -435,9 +502,13 @@ void OnTick()
         }
 
       success = Trade.BuyStop(NormalizeLot(mylotsi),BuyPrice,_Symbol,0,0,0,0,EaName+"-"+IntegerToString(count+1));
-
-      Sleep(5000);
-      return;
+      if(ValidateTradeResult("BuyStop",TRADE_OP_PENDING_CREATE,success,Trade.ResultOrder()))
+        {
+         LastBarBuy=CountBar;
+         RecoveryRetryAfterBuy=0;
+        }
+      else
+         RecoveryRetryAfterBuy=NewsNow()+5;
      }
 
    // ==============================
@@ -449,8 +520,9 @@ void OnTick()
          CountS<MaxOrder &&
          FirstEntrySignal(false) &&
          AutoRun &&
+         !newsLock &&
          ContinuebyTime &&
-         (ProfitToday()<ProfitPerday || ProfitPerday==0))
+         (realizedProfitToday<ProfitPerday || ProfitPerday==0))
         {
          SellPrice=Bid;
 
@@ -459,10 +531,9 @@ void OnTick()
          else
             TP=SellPrice-TakeProfit*pips;	
 
-         mylotsi= Lots;
-         success = Trade.Sell(NormalizeLot(mylotsi),_Symbol,SellPrice,0,TP,EaName+"-1");
-
-         Sleep(5000);
+          mylotsi= Lots;
+          success = Trade.Sell(NormalizeLot(mylotsi),_Symbol,SellPrice,0,TP,EaName+"-1");
+         ValidateTradeResult("Sell",TRADE_OP_MARKET_OPEN,success,Trade.ResultDeal());
          return;
         }
      }
@@ -472,30 +543,17 @@ void OnTick()
    if(CountS>0 &&
       CountSS<1 &&
       BarS>0 &&
-      CountBar!=LastBar &&
+      !newsLock &&
+      NewsNow()>=RecoveryRetryAfterSell &&
+      CountBar!=LastBarSell &&
+      CountS<MaxOrder &&
       SellPrice>MaxPriceSell &&
       Bid-MaxPriceSell>Distance*pips &&
       MaxPriceSell>0)
      {       
       count = CheckLastOrder(POSITION_TYPE_SELL);
-      LastBar = CountBar;
-      mylotsi= Lots;
-
-      if(LotType==lot_plus)
-        {
-         mylotsi=NormalizeDouble(LastLotsSell+LotPlus,2);
-        }
-
-      if(LotType==lot_multiply)
-        {
-         mylotsi = Lots;
-
-         for(cnt=1;cnt<=count;cnt++)
-           {
-            LastLots=mylotsi;
-            mylotsi=NormalizeDouble(LastLots*LotExponent,8);
-           }
-        }
+       mylotsi= Lots;
+      mylotsi=NormalizeDouble(LastLotsSell+LotPlus,8);
 
       if(mylotsi>MaxLot)
         {
@@ -503,9 +561,13 @@ void OnTick()
         }
 
       success = Trade.SellStop(NormalizeLot(mylotsi),SellPrice,_Symbol,0,0,0,0,EaName+"-"+IntegerToString(count+1));
-
-      Sleep(5000);
-      return;
+      if(ValidateTradeResult("SellStop",TRADE_OP_PENDING_CREATE,success,Trade.ResultOrder()))
+        {
+         LastBarSell=CountBar;
+         RecoveryRetryAfterSell=0;
+        }
+      else
+         RecoveryRetryAfterSell=NewsNow()+5;
      }
 
    // ==============================
@@ -521,12 +583,14 @@ void OnTick()
               {
                if(m_order.OrderType()==ORDER_TYPE_BUY_STOP && m_order.PriceOpen()>Ask+Pending*pips)
                  {
-                  Trade.OrderModify(m_order.Ticket(),Ask+Pending*pips,0,0,0,0);
+                  bool modified=Trade.OrderModify(m_order.Ticket(),Ask+Pending*pips,0,0,0,0);
+                  ValidateTradeResult("OrderModify",TRADE_OP_MODIFY,modified,m_order.Ticket());
                  }
 
                if(m_order.OrderType()==ORDER_TYPE_SELL_STOP && m_order.PriceOpen()<Bid-Pending*pips)
                  {
-                  Trade.OrderModify(m_order.Ticket(),Bid-Pending*pips,0,0,0,0);
+                  bool modified=Trade.OrderModify(m_order.Ticket(),Bid-Pending*pips,0,0,0,0);
+                  ValidateTradeResult("OrderModify",TRADE_OP_MODIFY,modified,m_order.Ticket());
                  }
               }
            }
@@ -600,8 +664,9 @@ void OnTick()
               {
                if(m_position.Ticket()==tick_max_buy || m_position.Ticket()==tick_min_buy)
                  {
-                  Trade.PositionClose(m_position.Ticket());
-                  Print("ปิดบายจับคู่บน-ล่าง");
+                  bool closed=Trade.PositionClose(m_position.Ticket());
+                  if(ValidateTradeResult("SecureProfitBuyClose",TRADE_OP_CLOSE,closed,m_position.Ticket()))
+                     Print("ปิดบายจับคู่บน-ล่าง");
                  }
               }
            }
@@ -623,8 +688,9 @@ void OnTick()
               {
                if(m_position.Ticket()==tick_max_sell || m_position.Ticket()==tick_min_sell)
                  {
-                  Trade.PositionClose(m_position.Ticket());
-                  Print("ปิดเซลจับคู่บน-ล่าง");
+                  bool closed=Trade.PositionClose(m_position.Ticket());
+                  if(ValidateTradeResult("SecureProfitSellClose",TRADE_OP_CLOSE,closed,m_position.Ticket()))
+                     Print("ปิดเซลจับคู่บน-ล่าง");
                  }
               }
            }
@@ -644,10 +710,6 @@ void OnTick()
       DeleteOrdersByType(ORDER_TYPE_SELL_STOP);
      }
 
-   if(ShowComment) 
-     {
-      Information();     
-     }
   }
 
 string ModeTradeName()
@@ -702,7 +764,7 @@ void CreateDashboardPanel()
    ObjectSetInteger(0,name,OBJPROP_XDISTANCE,4);
    ObjectSetInteger(0,name,OBJPROP_YDISTANCE,18);
    ObjectSetInteger(0,name,OBJPROP_XSIZE,210);
-   ObjectSetInteger(0,name,OBJPROP_YSIZE,330);
+    ObjectSetInteger(0,name,OBJPROP_YSIZE,410);
    ObjectSetInteger(0,name,OBJPROP_BGCOLOR,clrBlack);
    ObjectSetInteger(0,name,OBJPROP_COLOR,clrDimGray);
    ObjectSetInteger(0,name,OBJPROP_BORDER_TYPE,BORDER_FLAT);
@@ -867,18 +929,30 @@ void Information()
            "$"+TestCommaFormat(AccountInfoDouble(ACCOUNT_BALANCE),2),
            xValue,299,fsTitle,"Arial",clrGold);
 
-   SetText("DB_ACC_L5","Max DD",
-           xLabel,314,fs,"Arial",mutedCol);
+    SetText("DB_ACC_L5","Daily Max DD",
+            xLabel,314,fs,"Arial",mutedCol);
    SetText("DB_ACC_V5",
-           "$"+TestCommaFormat(MathAbs(MaxDD),2)+
-           " | "+DoubleToString(MathAbs(MaxDDcurr),2)+"%",
-           xValue,314,fs,"Arial",clrTomato);
+            "$"+TestCommaFormat(DailyMaxDDMoney,2)+
+            " | "+DoubleToString(DailyMaxDDPercent,2)+"%",
+            xValue,314,fs,"Arial",clrTomato);
 
-   SetText("DB_ACC_L6","Lot All History",
+    SetText("DB_ACC_L6","Portfolio Max DD",
            xLabel,329,fs,"Arial",mutedCol);
    SetText("DB_ACC_V6",
-           TestCommaFormat(LotALL(),2),
-           xValue,329,fs,"Arial",normalCol);
+            "$"+TestCommaFormat(PortfolioMaxDDMoney,2)+" | "+DoubleToString(PortfolioMaxDDPercent,2)+"%",
+            xValue,329,fs,"Arial",normalCol);
+
+   bool newsClosed=newsTradeLocked;
+   bool testerMode=MQLInfoInteger(MQL_TESTER);
+   string dashboardNews=testerMode ? "TESTER" : (NewsNextTime>0 ? NewsNextName : "-");
+   SetText("DB_NEWS_L","News",
+           xLabel,344,fs,"Arial",mutedCol);
+   SetText("DB_NEWS_V",newsClosed ? "CLOSED" : "OPEN",
+           xValue,344,fs,"Arial",newsClosed ? clrTomato : clrLime);
+   SetText("DB_NEWS_TIME",NewsNextTime>0 ? TimeToString(NewsNextTime,TIME_DATE|TIME_MINUTES) : "-",
+           xValue,359,fs,"Arial",mutedCol);
+   SetText("DB_NEWS_NAME",dashboardNews,
+           xValue,374,fs,"Arial",mutedCol);
   }
 
 //+------------------------------------------------------------------+
@@ -923,137 +997,6 @@ string TestCommaFormat(double Numb,int dig)
   }
 
 //+------------------------------------------------------------------+
-//| Lot history all                                                  |
-//+------------------------------------------------------------------+
-double LotALL()
-  {
-   ulong    deal_ticket;    
-   ulong    magic;
-   ulong    type = 9;
-   string   sym;
-   double   orderlot;
-   double   value = 0;
-   ENUM_DEAL_ENTRY entry_type;
-   datetime from_date=0; 
-   datetime to_date=TimeCurrent();
-
-   HistorySelect(from_date,to_date); 
-
-   for(int i=0;i<HistoryDealsTotal();i++) 
-     { 
-      deal_ticket = HistoryDealGetTicket(i); 
-      magic       = HistoryDealGetInteger(deal_ticket,DEAL_MAGIC);
-      sym         = HistoryDealGetString(deal_ticket,DEAL_SYMBOL);
-      orderlot    = HistoryDealGetDouble(deal_ticket,DEAL_VOLUME);
-      type        = HistoryDealGetInteger(deal_ticket,DEAL_TYPE);
-      entry_type  = (ENUM_DEAL_ENTRY)HistoryDealGetInteger(deal_ticket,DEAL_ENTRY);
-
-      if(_Symbol==sym && type<=1 && magic==MagicNumber && entry_type==DEAL_ENTRY_IN)
-        {
-         value += orderlot;
-        }
-     } 
-
-   return(value);     
-  }
-
-//+------------------------------------------------------------------+
-//| Lots today                                                       |
-//+------------------------------------------------------------------+
-double LotsD()
-  {
-   ulong    deal_ticket;    
-   ulong    magic, type;
-   string   sym;
-   double   lot;
-   double   value = 0;
-   datetime from_date=iTime(Symbol(), PERIOD_D1, 0); 
-   datetime to_date=TimeCurrent();
-
-   HistorySelect(from_date,to_date); 
-
-   for(int i=0;i<HistoryDealsTotal();i++) 
-     { 
-      deal_ticket = HistoryDealGetTicket(i); 
-      type        = HistoryDealGetInteger(deal_ticket,DEAL_TYPE);
-      magic       = HistoryDealGetInteger(deal_ticket,DEAL_MAGIC);
-      sym         = HistoryDealGetString(deal_ticket,DEAL_SYMBOL);
-      lot         = HistoryDealGetDouble(deal_ticket,DEAL_VOLUME);
-
-      if(_Symbol==sym && type<2 && magic==MagicNumber)
-        {
-         value += lot;
-        }
-     } 
-
-   return(value);     
-  }
-
-//+------------------------------------------------------------------+
-//| Lots week                                                        |
-//+------------------------------------------------------------------+
-double LotsW()
-  {
-   ulong    deal_ticket;    
-   ulong    magic, type;
-   string   sym;
-   double   lot;
-   double   value = 0;
-   datetime from_date=iTime(Symbol(), PERIOD_W1, 0); 
-   datetime to_date=TimeCurrent();
-
-   HistorySelect(from_date,to_date); 
-
-   for(int i=0;i<HistoryDealsTotal();i++) 
-     { 
-      deal_ticket = HistoryDealGetTicket(i); 
-      type        = HistoryDealGetInteger(deal_ticket,DEAL_TYPE);
-      magic       = HistoryDealGetInteger(deal_ticket,DEAL_MAGIC);
-      sym         = HistoryDealGetString(deal_ticket,DEAL_SYMBOL);
-      lot         = HistoryDealGetDouble(deal_ticket,DEAL_VOLUME);
-
-      if(_Symbol==sym && type<2 && magic==MagicNumber)
-        {
-         value += lot;
-        }
-     } 
-
-   return(value);     
-  }
-
-//+------------------------------------------------------------------+
-//| Lots month                                                       |
-//+------------------------------------------------------------------+
-double LotsM()
-  {
-   ulong    deal_ticket;    
-   ulong    magic, type;
-   string   sym;
-   double   lot;
-   double   value = 0;
-   datetime from_date=iTime(Symbol(), PERIOD_MN1, 0); 
-   datetime to_date=TimeCurrent();
-
-   HistorySelect(from_date,to_date); 
-
-   for(int i=0;i<HistoryDealsTotal();i++) 
-     { 
-      deal_ticket = HistoryDealGetTicket(i); 
-      type        = HistoryDealGetInteger(deal_ticket,DEAL_TYPE);
-      magic       = HistoryDealGetInteger(deal_ticket,DEAL_MAGIC);
-      sym         = HistoryDealGetString(deal_ticket,DEAL_SYMBOL);
-      lot         = HistoryDealGetDouble(deal_ticket,DEAL_VOLUME);
-
-      if(_Symbol==sym && type<2 && magic==MagicNumber)
-        {
-         value += lot;
-        }
-     } 
-
-   return(value);     
-  }
-
-//+------------------------------------------------------------------+
 //| Set label text                                                   |
 //+------------------------------------------------------------------+
 void SetText(string name,
@@ -1084,46 +1027,52 @@ void SetText(string name,
   }
 
 //+------------------------------------------------------------------+
-//| Profit today                                                     |
+//| Cached daily realized profit                                     |
 //+------------------------------------------------------------------+
-double ProfitToday()
+datetime CurrentServerDay()
   {
+   return(StringToTime(TimeToString(NewsNow(),TIME_DATE)));
+  }
+
+void RefreshDailyProfitCache(bool force)
+  {
+   datetime day=CurrentServerDay();
+   datetime now=NewsNow();
+   if(!force && ProfitCacheDay==day && ProfitCacheAt>0 && now-ProfitCacheAt<60)
+      return;
+
    ulong deal_ticket;
-   datetime close_time;
-   double profit;
-   double swap;
-   double commision;
-   double value = 0;
-   ulong type = 9;
+   ulong type;
    ulong magic;
    string sym;
+   double value=0;
+   datetime from_date=day;
 
-   datetime from_date=iTime(Symbol(), PERIOD_D1, 0); 
-   datetime to_date=TimeCurrent();
-
-   HistorySelect(from_date,to_date); 
-
-   for(int i=0;i<HistoryDealsTotal();i++) 
-     { 
-      deal_ticket = HistoryDealGetTicket(i); 
-      type        = HistoryDealGetInteger(deal_ticket,DEAL_TYPE);
-      magic       = HistoryDealGetInteger(deal_ticket,DEAL_MAGIC);
-      sym         = HistoryDealGetString(deal_ticket,DEAL_SYMBOL);
-      profit      = HistoryDealGetDouble(deal_ticket,DEAL_PROFIT); 
-      swap        = HistoryDealGetDouble(deal_ticket,DEAL_SWAP);
-      commision   = HistoryDealGetDouble(deal_ticket,DEAL_COMMISSION);
-      close_time  = (datetime)HistoryDealGetInteger(deal_ticket,DEAL_TIME); 
-
-      if(type<=1 &&
-         magic==MagicNumber &&
-         sym==_Symbol &&
-         TimeToString(TimeCurrent(),TIME_DATE) == TimeToString(close_time,TIME_DATE))
+   if(HistorySelect(from_date,now))
+     {
+      for(int i=0;i<HistoryDealsTotal();i++)
         {
-         value = value + profit + swap + commision;
+         deal_ticket=HistoryDealGetTicket(i);
+         type=HistoryDealGetInteger(deal_ticket,DEAL_TYPE);
+         magic=HistoryDealGetInteger(deal_ticket,DEAL_MAGIC);
+         sym=HistoryDealGetString(deal_ticket,DEAL_SYMBOL);
+         if(type<=1 && magic==MagicNumber && sym==_Symbol)
+           {
+            value+=HistoryDealGetDouble(deal_ticket,DEAL_PROFIT)+
+                   HistoryDealGetDouble(deal_ticket,DEAL_SWAP)+
+                   HistoryDealGetDouble(deal_ticket,DEAL_COMMISSION);
+           }
         }
-     } 
+     }
 
-   return(value);     
+   CachedProfitToday=value;
+   ProfitCacheDay=day;
+   ProfitCacheAt=now;
+  }
+
+double ProfitToday()
+  {
+   return(CachedProfitToday);
   }
 
 //+------------------------------------------------------------------+
@@ -1187,7 +1136,8 @@ void TrailingMar()
                  {
                   if(tss<PositionGetDouble(POSITION_SL) || PositionGetDouble(POSITION_SL)==0)
                     {
-                     Trade.PositionModify(ticket,tss,PositionGetDouble(POSITION_TP));
+                     bool modified=Trade.PositionModify(ticket,tss,PositionGetDouble(POSITION_TP));
+                     ValidateTradeResult("TrailingSellModify",TRADE_OP_MODIFY,modified,ticket);
                     }
                  }
               }
@@ -1210,7 +1160,8 @@ void TrailingMar()
                  {
                   if(tss>PositionGetDouble(POSITION_SL))
                     {
-                     Trade.PositionModify(ticket,tss,PositionGetDouble(POSITION_TP));
+                     bool modified=Trade.PositionModify(ticket,tss,PositionGetDouble(POSITION_TP));
+                     ValidateTradeResult("TrailingBuyModify",TRADE_OP_MODIFY,modified,ticket);
                     }
                  }
               }
@@ -1222,24 +1173,62 @@ void TrailingMar()
 //+------------------------------------------------------------------+
 //| MA value                                                         |
 //+------------------------------------------------------------------+
-double GetMA()
+double GetMA(int shift=1)
   {
-   double ema1Buffer[];
-   ArraySetAsSeries(ema1Buffer,true);
-
-   int ema1Handle = iMA(_Symbol,TimeFrame,MA1,0,MA_METHOD1,MA_PRICE1);
-
-   if(ema1Handle==INVALID_HANDLE)
+   if(MaHandle==INVALID_HANDLE || shift<0)
       return(0);
 
-   int ema1Copy = CopyBuffer(ema1Handle,0,0,3,ema1Buffer);
+   double maBuffer[1];
+   int maCopy=CopyBuffer(MaHandle,0,shift,1,maBuffer);
 
-   IndicatorRelease(ema1Handle);
-
-   if(ema1Copy<=1)
+   if(maCopy!=1)
       return(0);
 
-   return(ema1Buffer[1]);
+   return(maBuffer[0]);
+  }
+
+//+------------------------------------------------------------------+
+//| Validate a trade request with operation-specific server results  |
+//+------------------------------------------------------------------+
+bool ValidateTradeResult(string operation,
+                         ENUM_EA_TRADE_OPERATION operationType,
+                         bool requestOk,
+                         ulong ticket=0)
+  {
+   uint retcode=Trade.ResultRetcode();
+   bool accepted=false;
+
+   if(requestOk)
+     {
+      switch(operationType)
+        {
+         case TRADE_OP_MARKET_OPEN:
+            accepted=(retcode==TRADE_RETCODE_DONE || retcode==TRADE_RETCODE_DONE_PARTIAL);
+            break;
+         case TRADE_OP_PENDING_CREATE:
+            accepted=(retcode==TRADE_RETCODE_PLACED || retcode==TRADE_RETCODE_DONE);
+            break;
+         case TRADE_OP_CLOSE:
+            accepted=(retcode==TRADE_RETCODE_DONE);
+            break;
+         case TRADE_OP_DELETE:
+            accepted=(retcode==TRADE_RETCODE_DONE);
+            break;
+         case TRADE_OP_MODIFY:
+            accepted=(retcode==TRADE_RETCODE_DONE || retcode==TRADE_RETCODE_NO_CHANGES);
+            break;
+        }
+     }
+
+   if(!accepted)
+      Print("Trade failure operation=",operation,
+            " symbol=",_Symbol,
+            " magic=",MagicNumber,
+            " ticket=",ticket,
+            " request_ok=",requestOk,
+            " retcode=",retcode,
+            " description=",Trade.ResultRetcodeDescription());
+   return(accepted);
   }
 
 //+------------------------------------------------------------------+
@@ -1261,11 +1250,21 @@ int CheckLastOrder(ulong type)
             int nub = StringSplit(m_position.Comment(), '-', parts);
 
             if(nub>=2)
-              {
-               value = (int)StringToInteger(parts[1]);
-              }
-           }
-        }
+               value=MathMax(value,(int)StringToInteger(parts[nub-1]));
+          }
+       }
+     }
+
+   for(int i=0;i<OrdersTotal();i++)
+     {
+      if(!m_order.SelectByIndex(i) || m_order.Symbol()!=_Symbol || m_order.Magic()!=MagicNumber)
+         continue;
+      if((type==POSITION_TYPE_BUY && m_order.OrderType()!=ORDER_TYPE_BUY_STOP) ||
+         (type==POSITION_TYPE_SELL && m_order.OrderType()!=ORDER_TYPE_SELL_STOP))
+         continue;
+      int nub=StringSplit(m_order.Comment(),'-',parts);
+      if(nub>=2)
+         value=MathMax(value,(int)StringToInteger(parts[nub-1]));
      }
 
    return(value);
@@ -1281,10 +1280,18 @@ bool FirstEntrySignal(bool isBuy)
    double o1 = iOpen(Symbol(),TimeFrame,1);
    double h2 = iHigh(Symbol(),TimeFrame,2);
    double l2 = iLow(Symbol(),TimeFrame,2);
-   double ma1 = GetMA();
+   double ma1 = 0;
+   double ma2 = 0;
 
-   if(c1==0 || ma1==0)
-      return(false);
+   if(FirstEntryMode==Entry_MA_Filter || FirstEntryMode==Entry_MA_Cross || FirstEntryMode==Entry_MA_Candle)
+     {
+      ma1=GetMA(1);
+      if(FirstEntryMode==Entry_MA_Cross)
+         ma2=GetMA(2);
+       if(c1==0 || (FirstEntryMode==Entry_MA_Cross && c2==0) ||
+          ma1==0 || (FirstEntryMode==Entry_MA_Cross && ma2==0))
+         return(false);
+     }
 
    switch(FirstEntryMode)
      {
@@ -1292,7 +1299,7 @@ bool FirstEntrySignal(bool isBuy)
          return(isBuy ? c1>ma1 : c1<ma1);
 
       case Entry_MA_Cross:
-         return(isBuy ? (c2<=ma1 && c1>ma1) : (c2>=ma1 && c1<ma1));
+         return(isBuy ? (c2<=ma2 && c1>ma1) : (c2>=ma2 && c1<ma1));
 
       case Entry_Candle_Color:
          return(isBuy ? c1>o1 : c1<o1);
@@ -1367,6 +1374,293 @@ void DeleteOldButtons()
    ObjectDelete(0,"Button_CloseAll");
   }
 
+void ResetRecoveryBarStateForClosedBaskets()
+  {
+   if(CountB==0 && CountBS==0)
+     {
+      LastBarBuy=0;
+      RecoveryRetryAfterBuy=0;
+     }
+   if(CountS==0 && CountSS==0)
+     {
+      LastBarSell=0;
+      RecoveryRetryAfterSell=0;
+     }
+  }
+
+//+------------------------------------------------------------------+
+//| Cached MT5 economic-calendar safety layer                         |
+//+------------------------------------------------------------------+
+datetime NewsNow()
+  {
+   datetime now=TimeTradeServer();
+   if(now<=0) now=TimeCurrent();
+   return(now);
+  }
+
+void RefreshNewsCache(bool force)
+  {
+   if(!UseNewsFilter) return;
+   if(MQLInfoInteger(MQL_TESTER))
+     {
+      NewsCacheValid=true;
+      NewsNextTime=0;
+      NewsNextName="TESTER";
+      return;
+     }
+   datetime now=NewsNow();
+   if(!force && NewsCacheAt>0 && now-NewsCacheAt<3600) return;
+   if(!force && NewsLastAttempt>0 && now-NewsLastAttempt<60) return;
+   NewsLastAttempt=now;
+   MqlCalendarValue values[];
+   int lookbackMinutes=MathMax(NewsResumeMinutes,60)+60;
+   int copied=CalendarValueHistory(values,now-lookbackMinutes*60,now+3*86400,"",NewsCurrency);
+   if(copied<0)
+     {
+      int error=GetLastError();
+      if(NewsLastErrorLog==0 || now-NewsLastErrorLog>=300)
+        {
+         Print("News calendar unavailable; no new News lock applied. error=",error);
+         NewsLastErrorLog=now;
+        }
+      return; // retain an active valid cache, but do not lock a normal day with no cache.
+     }
+   if(copied==0 && NewsCacheValid && (newsLiquidationPending || now<newsLockUntil))
+      return;
+   ArrayResize(NewsValues,copied);
+   for(int i=0;i<copied;i++) NewsValues[i]=values[i];
+   NewsCacheAt=now;
+   NewsCacheValid=true;
+  }
+
+bool IsQualifyingNews(int index,datetime &eventTime,string &eventName)
+  {
+   if(index<0 || index>=ArraySize(NewsValues)) return(false);
+   if(MQLInfoInteger(MQL_TESTER)) return(false);
+   MqlCalendarEvent event;
+   if(!CalendarEventById(NewsValues[index].event_id,event)) return(false);
+   string currency=NewsCurrency;
+   StringToUpper(currency);
+   if(currency!="USD") return(false);
+   if(event.importance!=CALENDAR_IMPORTANCE_HIGH) return(false);
+   eventTime=NewsValues[index].time;
+   eventName=event.name;
+   string lowerName=eventName;
+   StringToLower(lowerName);
+   string keywords[10]=
+     {"cpi","consumer price index","ppi","producer price index","nfp",
+      "non-farm payrolls","nonfarm payrolls","non-farm employment",
+      "nonfarm employment change","fomc"};
+   for(int i=0;i<ArraySize(keywords);i++)
+      if(StringFind(lowerName,keywords[i])>=0)
+         return(true);
+   string rateKeywords[5]=
+     {"federal funds rate","fed interest rate decision",
+      "federal reserve interest rate decision","fed rate decision","powell"};
+   for(int i=0;i<ArraySize(rateKeywords);i++)
+      if(StringFind(lowerName,rateKeywords[i])>=0)
+         return(true);
+   return(false);
+  }
+
+void CountMatchingExposure(int &positionsRemaining,int &ordersRemaining)
+  {
+   positionsRemaining=0;
+   ordersRemaining=0;
+   for(int i=0;i<PositionsTotal();i++)
+     {
+      if(!m_position.SelectByIndex(i)) continue;
+      if(m_position.Symbol()==_Symbol && m_position.Magic()==MagicNumber)
+         positionsRemaining++;
+     }
+   for(int i=0;i<OrdersTotal();i++)
+     {
+      if(!m_order.SelectByIndex(i)) continue;
+      if(m_order.Symbol()==_Symbol && m_order.Magic()==MagicNumber)
+         ordersRemaining++;
+     }
+  }
+
+void UpdateNewsState(bool &windowActive,bool &hardCloseActive)
+  {
+   windowActive=false;
+   hardCloseActive=false;
+   if(!UseNewsFilter && !newsLiquidationPending)
+      return;
+
+   RefreshNewsCache(false);
+   datetime now=NewsNow();
+   NewsNextTime=0;
+   NewsNextName="-";
+
+   for(int i=0;i<ArraySize(NewsValues);i++)
+     {
+      datetime eventTime; string eventName;
+      if(!IsQualifyingNews(i,eventTime,eventName)) continue;
+      datetime protectionEnd=eventTime+NewsResumeMinutes*60;
+      if(eventTime>=now && (NewsNextTime==0 || eventTime<NewsNextTime))
+        { NewsNextTime=eventTime; NewsNextName=eventName; }
+      if(now>=eventTime-NewsStopMinutes*60 && now<protectionEnd)
+        {
+         windowActive=true;
+         newsLockUntil=(datetime)MathMax((long)newsLockUntil,(long)protectionEnd);
+        }
+      if(now>=eventTime-NewsHardCloseMinutes*60 && now<protectionEnd)
+         hardCloseActive=true;
+     }
+
+   if(now<newsLockUntil)
+      windowActive=true;
+  }
+
+bool EnforceNewsSafety()
+  {
+   if(MQLInfoInteger(MQL_TESTER))
+     {
+      newsTradeLocked=false;
+      newsLiquidationPending=false;
+      NewsNextTime=0;
+      NewsNextName="TESTER";
+      return(false);
+     }
+   bool windowActive=false;
+   bool hardCloseActive=false;
+   UpdateNewsState(windowActive,hardCloseActive);
+
+   if(!UseNewsFilter && !newsLiquidationPending)
+     {
+      newsTradeLocked=false;
+      return(false);
+     }
+
+   if(hardCloseActive)
+      newsLiquidationPending=true;
+
+   int positionsRemaining=0;
+   int ordersRemaining=0;
+   CountMatchingExposure(positionsRemaining,ordersRemaining);
+   bool mustLock=windowActive || newsLiquidationPending ||
+                 (positionsRemaining>0 && hardCloseActive);
+   if(!mustLock)
+     {
+      newsTradeLocked=false;
+      return(false);
+     }
+
+   newsTradeLocked=true;
+   DeleteOrdersByType();
+   if(newsLiquidationPending)
+      ClosePositionsByType();
+
+   CountMatchingExposure(positionsRemaining,ordersRemaining);
+   if(newsLiquidationPending && positionsRemaining==0 && ordersRemaining==0)
+      newsLiquidationPending=false;
+
+   if(newsLiquidationPending || windowActive || positionsRemaining>0 || ordersRemaining>0)
+      return(true);
+
+   newsTradeLocked=false;
+   return(false);
+  }
+
+double PersistGlobalMaximum(string name,double candidate)
+  {
+   if(!GlobalVariableCheck(name))
+      GlobalVariableSet(name,candidate);
+   for(int attempt=0;attempt<5;attempt++)
+     {
+      double current=GlobalVariableGet(name);
+      if(candidate<=current)
+         return(current);
+      if(GlobalVariableSetOnCondition(name,candidate,current))
+         return(candidate);
+     }
+   return(MathMax(candidate,GlobalVariableGet(name)));
+  }
+
+string AccountDDPrefix()
+  {
+   return("EA_Susanoo_DD_"+IntegerToString(AccountInfoInteger(ACCOUNT_LOGIN)));
+  }
+
+void RestoreDrawdownTracking()
+  {
+   string prefix=AccountDDPrefix();
+   PortfolioPeakEquity=GlobalVariableGet(prefix+"_Peak");
+   PortfolioMaxDDMoney=GlobalVariableGet(prefix+"_Max");
+   PortfolioMaxDDPercent=GlobalVariableGet(prefix+"_MaxPercent");
+   if(PortfolioPeakEquity<=0) PortfolioPeakEquity=AccountInfoDouble(ACCOUNT_EQUITY);
+   DailyTrackingDay=(datetime)GlobalVariableGet(prefix+"_Day");
+   DailyPeakEquity=GlobalVariableGet(prefix+"_DailyPeak");
+   DailyMaxDDMoney=GlobalVariableGet(prefix+"_DailyMax");
+  }
+
+void UpdateDrawdownTracking()
+  {
+   datetime now=NewsNow();
+   datetime day=StringToTime(TimeToString(now,TIME_DATE));
+   double equity=AccountInfoDouble(ACCOUNT_EQUITY);
+   if(DailyTrackingDay!=day)
+     { DailyTrackingDay=day; DailyPeakEquity=equity; DailyMaxDDMoney=0; DailyMaxDDPercent=0; }
+   if(equity>DailyPeakEquity) DailyPeakEquity=equity;
+   double dailyDD=MathMax(0.0,DailyPeakEquity-equity);
+   DailyMaxDDMoney=MathMax(DailyMaxDDMoney,dailyDD);
+   DailyMaxDDPercent=DailyPeakEquity>0 ? DailyMaxDDMoney/DailyPeakEquity*100.0 : 0;
+   if(equity>PortfolioPeakEquity) PortfolioPeakEquity=equity;
+   double portfolioDD=MathMax(0.0,PortfolioPeakEquity-equity);
+   PortfolioMaxDDMoney=MathMax(PortfolioMaxDDMoney,portfolioDD);
+   PortfolioMaxDDPercent=PortfolioPeakEquity>0 ? PortfolioMaxDDMoney/PortfolioPeakEquity*100.0 : 0;
+   string prefix=AccountDDPrefix();
+   PortfolioPeakEquity=PersistGlobalMaximum(prefix+"_Peak",PortfolioPeakEquity);
+   PortfolioMaxDDMoney=PersistGlobalMaximum(prefix+"_Max",PortfolioMaxDDMoney);
+   PortfolioMaxDDPercent=PortfolioPeakEquity>0 ? PortfolioMaxDDMoney/PortfolioPeakEquity*100.0 : 0;
+   PortfolioMaxDDPercent=PersistGlobalMaximum(prefix+"_MaxPercent",PortfolioMaxDDPercent);
+   GlobalVariableSet(prefix+"_Day",(double)DailyTrackingDay);
+   GlobalVariableSet(prefix+"_DailyPeak",DailyPeakEquity);
+   GlobalVariableSet(prefix+"_DailyMax",DailyMaxDDMoney);
+  }
+
+//+------------------------------------------------------------------+
+//| Evaluate high-priority risk exits before opening anything         |
+//+------------------------------------------------------------------+
+bool RiskExitTriggered()
+  {
+   bool triggered=false;
+   if(CountB!=0 && SumProfitBuy>=TP2 && TP2>0)
+     {
+      ClosePositionsByType(POSITION_TYPE_BUY);
+      DeleteOrdersByType(ORDER_TYPE_BUY_STOP);
+      triggered=true;
+     }
+   if(CountS!=0 && SumProfitSell>=TP2 && TP2>0)
+     {
+      ClosePositionsByType(POSITION_TYPE_SELL);
+      DeleteOrdersByType(ORDER_TYPE_SELL_STOP);
+      triggered=true;
+     }
+   if(OpenOrders!=0 && Profit<=-SL2 && SL2>0)
+     {
+      ClosePositionsByType();
+      DeleteOrdersByType();
+      if(StopEA) AutoRun=false;
+      triggered=true;
+     }
+   if(OpenOrders!=0 && Profit<=-(SL3*AccountInfoDouble(ACCOUNT_BALANCE)/100) && SL3>0)
+     {
+      ClosePositionsByType();
+      DeleteOrdersByType();
+      if(StopEA) AutoRun=false;
+      triggered=true;
+     }
+   if(OpenOrders!=0 && Profit>=(TP3*AccountInfoDouble(ACCOUNT_BALANCE)/100) && TP3>0)
+     {
+      ClosePositionsByType();
+      DeleteOrdersByType();
+      triggered=true;
+     }
+   return(triggered);
+  }
+
 //+------------------------------------------------------------------+
 //| Close positions by type                                          |
 //| position_type = -1 means close all                               |
@@ -1392,17 +1686,14 @@ void ClosePositionsByType(int position_type=-1)
       n++;
      }
 
-   Trade.SetAsyncMode(true);
-
    for(int i=0; i<n; i++)
      {
       if(trades[i]>0)
         {
-         Trade.PositionClose(trades[i]);
+         bool closed=Trade.PositionClose(trades[i]);
+         ValidateTradeResult("PositionClose",TRADE_OP_CLOSE,closed,trades[i]);
         }
      }
-
-   Trade.SetAsyncMode(false);
   }
 
 //+------------------------------------------------------------------+
@@ -1422,7 +1713,8 @@ void DeleteOrdersByType(int order_type=-1)
       if(order_type!=-1 && (int)m_order.OrderType()!=order_type)
          continue;
 
-      Trade.OrderDelete(m_order.Ticket());
+      bool deleted=Trade.OrderDelete(m_order.Ticket());
+      ValidateTradeResult("OrderDelete",TRADE_OP_DELETE,deleted,m_order.Ticket());
      }
   }
 //+------------------------------------------------------------------+
